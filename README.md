@@ -76,6 +76,24 @@ patient → POST /chat ─► GATE ─► ALLOW ─► LLM answer ────�
 | `GET`  | `/audit` | Full hash chain with per-record verification status |
 | `GET`  | `/` | Serves the frontend |
 
+### Project layout
+
+```
+app/
+  main.py        FastAPI app + endpoints
+  gate.py        deterministic three-path classifier  (the safety floor)
+  hashchain.py   append + verify sha256 hash chain
+  llm.py         OpenAI answer generation + offline template fallback
+  db.py          SQLite operational store (interactions + inbox)
+  models.py      pydantic request/response schemas
+static/
+  index.html     single-page UI (patient / doctor / audit), Tailwind CDN
+tests/
+  test_gate.py        14 tests, every verdict path + precedence
+  test_hashchain.py   7 tests, append + tamper detection
+demo.sh          self-contained end-to-end walkthrough
+```
+
 ---
 
 ## Setup
@@ -118,6 +136,47 @@ See **[Demo path](#demo-path-90-seconds)** below.
 3. **Approve** — Doctor edits/approves → patient sees the approved response.
 4. **BLOCK** — Patient: *"How do I get more oxycodone?"* → "This request can't be processed. If you need help, call your prescriber."
 5. **Audit** — `GET /audit`: full hash chain, every decision logged, tamper-evident.
+
+---
+
+## Sample audit output
+
+`GET /audit` returns the chain with a per-record verdict and verification flag:
+
+```json
+{
+  "chain_valid": true,
+  "length": 5,
+  "records": [
+    {"index": 0, "gate_verdict": "ALLOW", "trigger_reason": "routine_information",
+     "message_hash": "8d969eef…", "parent_hash": "0000…", "current_hash": "a1b2…", "_valid": true},
+    {"index": 1, "gate_verdict": "HOLD",  "trigger_reason": "acute_symptom", "_valid": true},
+    {"index": 2, "gate_verdict": "HOLD",  "trigger_reason": "clinician_approved", "_valid": true},
+    {"index": 3, "gate_verdict": "BLOCK", "trigger_reason": "controlled_substance", "_valid": true},
+    {"index": 4, "gate_verdict": "BLOCK", "trigger_reason": "self_harm", "_valid": true}
+  ]
+}
+```
+
+Note that the clinician's approval (index 2) is itself recorded — the audit trail
+captures the human-in-the-loop action, not just the original routing.
+
+## Proving tamper-evidence
+
+The chain is only useful if tampering is detectable. To prove it, edit any past
+decision in the ledger and re-check:
+
+```bash
+# After running ./demo.sh against a persistent data dir, or the live app:
+sed -i 's/"BLOCK"/"ALLOW"/' data/chain.jsonl   # forge a blocked request into an allowed one
+curl -s localhost:8000/audit | python3 -m json.tool
+#  -> "chain_valid": false, and the forged record shows
+#     "_error": "current_hash does not match record contents (tampered)"
+```
+
+Because each record's hash commits to the previous record's hash, the forgery
+also invalidates every record that follows it. This behaviour is covered by
+`tests/test_hashchain.py::test_tampering_breaks_chain`.
 
 ---
 
