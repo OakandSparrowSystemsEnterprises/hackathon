@@ -11,6 +11,9 @@ class ChatRequest(BaseModel):
     """A patient message submitted to the chatbot."""
 
     message: str = Field(..., min_length=1, description="The patient's message.")
+    session_id: str = Field(
+        "", description="Opaque per-browser session id so the patient can poll for released replies."
+    )
 
 
 class ChatResponse(BaseModel):
@@ -33,3 +36,13 @@ class ApproveRequest(BaseModel):
         None, description="Edited response to release. If omitted on approve, the AI draft is used."
     )
     note: Optional[str] = Field(None, description="Optional internal clinician note.")
+
+
+class BatchApproveRequest(BaseModel):
+    """A clinician's request to release a set of agent-recommended drafts at once."""
+
+    ids: Optional[list[int]] = Field(
+        None,
+        description="Specific interaction ids to approve. If omitted, all currently "
+        "agent-recommended (SUGGEST_APPROVE) pending items are released.",
+    )

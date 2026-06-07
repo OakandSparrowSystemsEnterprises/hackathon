@@ -86,11 +86,16 @@ message: *"Your question is being reviewed by a clinician."*
 
 **Action:** Turn to the **RIGHT (doctor) window.** Click **↻ Refresh** if needed.
 
-**Judges see:** the doctor's inbox now holds the question **and the AI's draft answer**.
+**Judges see:** the inbox isn't a raw pile — an **AI agent has triaged it**. A
+stats bar shows counts by risk (CRITICAL / HIGH / MEDIUM / LOW), the chest-pain
+item sits at the **top with a red CRITICAL · ESCALATE badge** and the red-flag it
+caught, and the AI draft is ready below.
 
-> **"The clinician sees the question, and the AI's draft. They stay in control."**
+> **"A real clinician gets thousands of these a day. So there's an agent on the
+> doctor's side — it triages every question by clinical risk. The dangerous ones
+> rise to the top. The human's job becomes supervising, not drowning."**
 
-**Action:** Click into the draft box, tweak one line (e.g. change it to:)
+**Action:** In the CRITICAL item, tweak one line of the draft (e.g.):
 
 ```
 Please don't take aspirin on your own. Come in today for an ECG — call 911 if the pain worsens.
@@ -98,10 +103,16 @@ Please don't take aspirin on your own. Come in today for an ECG — call 911 if 
 
 Then click **Approve & release**.
 
-**Action:** Turn back to the **LEFT (patient) window**. Wait ~2 seconds.
+*(Optional, +5s, if you seeded low-risk questions: click the green*
+*"⚡ Approve N agent-recommended" button.)*
 
-**Judges see:** a new green **Clinician decision** bubble appears in the patient
-chat — the approved, human-reviewed response, delivered live.
+> **"I personally handle the critical one. The safe, routine ones? I clear the
+> whole batch in one click — and every single release is still logged."**
+
+**Action:** Turn back to the **LEFT (patient) window**. (No refresh needed.)
+
+**Judges see:** a green **✓ Clinician approved** bubble appears in the patient
+chat — the human-reviewed response, delivered live.
 
 > **"The patient gets the answer a clinician signed off on. Not the model's guess."**
 
@@ -204,6 +215,16 @@ answer — they don't depend on the LLM:
 - `How do I get more oxycodone without seeing my doctor?`
 - *(crisis variant, handle gently)* `I don't want to be alive anymore` → routes to the 988 crisis line.
 
-> **Note on the HOLD → patient hand-off:** when the doctor approves, the answer
-> now appears in the patient chat **instantly** (pushed cross-window), with a
-> 2-second polling backup. You do not need to refresh the patient tab.
+> **Note on the HOLD → patient hand-off:** the patient transcript is rendered
+> from the server (`/patient/conversation/{session_id}`) and refreshes every
+> ~1.5s while anything is pending, so the approved answer appears within ~2
+> seconds. It's reliable across separate windows and survives a page refresh —
+> you never need to manually reload the patient view.
+
+> **Seeding the triage demo (optional, do during setup):** to show the agent
+> sorting a realistic queue, paste a few of these into the patient box before you
+> start so the inbox has CRITICAL → LOW items waiting:
+> `Can I take ibuprofen with warfarin?` (HIGH),
+> `Do I have a sinus infection?` (MEDIUM),
+> `Should I take vitamin D in the morning?` (LOW, batch-approvable),
+> `Is it okay to stretch before a run?` (LOW, batch-approvable).
