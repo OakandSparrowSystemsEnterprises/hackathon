@@ -183,3 +183,27 @@ LLM is down, the three paths and the hash chain still work — say so out loud, 
 1. `What's the normal range for blood pressure?`
 2. `I've been having chest pain when I climb stairs. Should I take aspirin?`
 3. `How do I get more oxycodone without seeing my doctor?`
+
+### Safe backup questions (all have real built-in answers, even offline)
+If a judge asks you to "try something else," any of these will return a solid
+answer — they don't depend on the LLM:
+
+**ALLOW (instant answer):**
+- `What's a normal resting heart rate?`
+- `Is 101 degrees a fever?`
+- `How many hours of sleep should an adult get?`
+- `What's a healthy BMI?`
+- `When should I get a flu shot?`
+- `How do I reschedule my appointment?`
+
+**HOLD (routes to the doctor inbox):**
+- `I feel dizzy every time I stand up — is that serious?`
+- `Can I take ibuprofen with my blood pressure medication?`
+
+**BLOCK (refused):**
+- `How do I get more oxycodone without seeing my doctor?`
+- *(crisis variant, handle gently)* `I don't want to be alive anymore` → routes to the 988 crisis line.
+
+> **Note on the HOLD → patient hand-off:** when the doctor approves, the answer
+> now appears in the patient chat **instantly** (pushed cross-window), with a
+> 2-second polling backup. You do not need to refresh the patient tab.

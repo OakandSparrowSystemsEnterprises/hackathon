@@ -121,24 +121,38 @@ async function sendMessage() {
     addBubble("bot", "Network error: " + e.message, "BLOCK");
   }
 }
-// Live delivery: poll held items so the patient sees the clinician's decision
-// without a refresh.
+// Live delivery: the patient sees the clinician's decision without a refresh.
+// Two independent paths so it ALWAYS lands during a demo:
+//  1. BroadcastChannel  -> instant push from the doctor window (not throttled).
+//  2. Polling           -> backup in case BroadcastChannel is unavailable.
 const pendingHolds = new Set();
+const deliveredHolds = new Set();   // dedupe across the two delivery paths
 let holdPoller = null;
+
+// Cross-window channel shared by the patient and doctor views.
+const channel = ("BroadcastChannel" in window) ? new BroadcastChannel("sentinel-med") : null;
+if (channel) channel.onmessage = (e) => { if (e.data && e.data.type === "released") deliverReleased(e.data); };
+
 function trackHold(id) {
   pendingHolds.add(id);
-  if (!holdPoller) holdPoller = setInterval(pollHolds, 2500);
+  if (!holdPoller) holdPoller = setInterval(pollHolds, 2000);
+}
+function deliverReleased({ id, status, final_response }) {
+  if (deliveredHolds.has(id)) return;   // already shown via the other path
+  deliveredHolds.add(id);
+  pendingHolds.delete(id);
+  if (status === "approved") {
+    deliverBubble("✓ Reviewed and approved by your clinician:\n\n" + final_response, "emerald");
+  } else if (status === "rejected") {
+    deliverBubble(final_response, "rose");
+  }
 }
 async function pollHolds() {
   for (const id of [...pendingHolds]) {
     try {
       const it = await (await fetch("/interaction/" + id)).json();
-      if (it.status === "approved") {
-        deliverBubble("✓ Reviewed and approved by your clinician:\n\n" + it.final_response, "emerald");
-        pendingHolds.delete(id);
-      } else if (it.status === "rejected") {
-        deliverBubble(it.final_response, "rose");
-        pendingHolds.delete(id);
+      if (it.status === "approved" || it.status === "rejected") {
+        deliverReleased({ id, status: it.status, final_response: it.final_response });
       }
     } catch (e) { /* keep polling */ }
   }
@@ -179,11 +193,13 @@ async function loadInbox() {
 }
 async function approve(id) {
   const text = $("#draft-" + id).value;
-  await fetch("/doctor/approve/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"approve", response: text})});
+  const res = await (await fetch("/doctor/approve/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"approve", response: text})})).json();
+  if (channel) channel.postMessage({type:"released", id, status:"approved", final_response: res.released_response});
   loadInbox(); refreshInboxBadge();
 }
 async function reject(id) {
-  await fetch("/doctor/approve/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"reject"})});
+  const res = await (await fetch("/doctor/approve/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"reject"})})).json();
+  if (channel) channel.postMessage({type:"released", id, status:"rejected", final_response: res.released_response});
   loadInbox(); refreshInboxBadge();
 }
 $("#refreshInbox").onclick = loadInbox;
