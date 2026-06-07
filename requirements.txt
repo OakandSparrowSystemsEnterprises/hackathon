@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+# Optional: enables live LLM answers. Demo falls back to templates if absent/unset.
+openai>=1.30
