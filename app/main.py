@@ -39,6 +39,7 @@ DATA_DIR = os.environ.get("SENTINEL_DATA_DIR", "data")
 DB_PATH = os.environ.get("SENTINEL_DB_PATH", os.path.join(DATA_DIR, "sentinel.db"))
 CHAIN_PATH = os.environ.get("SENTINEL_CHAIN_PATH", os.path.join(DATA_DIR, "chain.jsonl"))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+UI_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -209,13 +210,46 @@ def audit() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Frontend (served last so API routes take precedence).
+# Next.js static frontend (served last so API routes take precedence).
 # --------------------------------------------------------------------------- #
-@app.get("/")
-def index() -> FileResponse:
-    """Serve the single-page patient + doctor UI."""
+def _ui(name: str) -> FileResponse:
+    path = os.path.join(UI_DIR, name)
+    if os.path.isfile(path):
+        return FileResponse(path)
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
-if os.path.isdir(STATIC_DIR):
+@app.get("/")
+def index() -> FileResponse:
+    return _ui("index.html")
+
+
+@app.get("/login")
+def login_page() -> FileResponse:
+    return _ui("login.html")
+
+
+@app.get("/patient")
+def patient_page() -> FileResponse:
+    return _ui("patient.html")
+
+
+@app.get("/doctor")
+def doctor_page_ui() -> FileResponse:
+    return _ui("doctor.html")
+
+
+@app.get("/audit-log")
+def audit_page() -> FileResponse:
+    return _ui("audit.html")
+
+
+@app.get("/demo")
+def demo_page() -> FileResponse:
+    return _ui("demo.html")
+
+
+if os.path.isdir(UI_DIR):
+    app.mount("/_next", StaticFiles(directory=os.path.join(UI_DIR, "_next")), name="next-assets")
+elif os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
