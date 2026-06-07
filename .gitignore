@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.pytest_cache/
 
 # Env / secrets
 .env
@@ -13,6 +14,12 @@ env/
 data/
 *.db
 *.jsonl
+
+# Node / frontend
+node_modules/
+.next/
+out/
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store

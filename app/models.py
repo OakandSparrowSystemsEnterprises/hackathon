@@ -33,3 +33,10 @@ class ApproveRequest(BaseModel):
         None, description="Edited response to release. If omitted on approve, the AI draft is used."
     )
     note: Optional[str] = Field(None, description="Optional internal clinician note.")
+
+
+class LoginRequest(BaseModel):
+    """Demo login credentials."""
+
+    username: str
+    password: str
