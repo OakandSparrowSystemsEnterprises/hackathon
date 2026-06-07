@@ -115,11 +115,46 @@ async function sendMessage() {
     const r = await fetch("/chat", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({message: msg})});
     const data = await r.json();
     addBubble("bot", data.reply, data.verdict);
+    if (data.verdict === "HOLD") trackHold(data.interaction_id);
     refreshInboxBadge();
   } catch (e) {
     addBubble("bot", "Network error: " + e.message, "BLOCK");
   }
 }
+// Live delivery: poll held items so the patient sees the clinician's decision
+// without a refresh.
+const pendingHolds = new Set();
+let holdPoller = null;
+function trackHold(id) {
+  pendingHolds.add(id);
+  if (!holdPoller) holdPoller = setInterval(pollHolds, 2500);
+}
+async function pollHolds() {
+  for (const id of [...pendingHolds]) {
+    try {
+      const it = await (await fetch("/interaction/" + id)).json();
+      if (it.status === "approved") {
+        deliverBubble("✓ Reviewed and approved by your clinician:\n\n" + it.final_response, "emerald");
+        pendingHolds.delete(id);
+      } else if (it.status === "rejected") {
+        deliverBubble(it.final_response, "rose");
+        pendingHolds.delete(id);
+      }
+    } catch (e) { /* keep polling */ }
+  }
+  if (pendingHolds.size === 0 && holdPoller) { clearInterval(holdPoller); holdPoller = null; }
+}
+function deliverBubble(text, color) {
+  const log = $("#chatLog");
+  const wrap = document.createElement("div");
+  wrap.className = "flex justify-start";
+  wrap.innerHTML = `<div class="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-${color}-50 border border-${color}-300 whitespace-pre-line">
+    <div class="text-[10px] font-bold uppercase mb-1 text-${color}-700">Clinician decision</div>
+    <div>${escapeHtml(text)}</div></div>`;
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+}
+
 $("#sendBtn").onclick = sendMessage;
 $("#chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMessage(); });
 document.querySelectorAll(".example").forEach((b) => b.onclick = () => { $("#chatInput").value = b.textContent; sendMessage(); });

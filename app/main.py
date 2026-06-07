@@ -168,6 +168,24 @@ def doctor_approve(item_id: int, req: ApproveRequest) -> dict[str, Any]:
     return {"interaction": updated, "released_response": final}
 
 
+@app.get("/interaction/{item_id}")
+def get_interaction(item_id: int) -> dict[str, Any]:
+    """Return the current state of one interaction.
+
+    The patient UI polls this for HOLD items so an approved/rejected response is
+    delivered live once a clinician acts, without a page refresh.
+    """
+    item = db.get_interaction(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Interaction not found")
+    return {
+        "id": item["id"],
+        "verdict": item["verdict"],
+        "status": item["status"],
+        "final_response": item["final_response"],
+    }
+
+
 @app.get("/audit")
 def audit() -> dict[str, Any]:
     """Return the full hash chain with per-record verification status."""
