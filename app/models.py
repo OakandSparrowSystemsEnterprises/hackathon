@@ -46,3 +46,10 @@ class BatchApproveRequest(BaseModel):
         description="Specific interaction ids to approve. If omitted, all currently "
         "agent-recommended (SUGGEST_APPROVE) pending items are released.",
     )
+
+
+class LoginRequest(BaseModel):
+    """Demo login credentials."""
+
+    username: str
+    password: str

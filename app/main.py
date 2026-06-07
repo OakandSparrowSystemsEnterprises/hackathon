@@ -20,15 +20,21 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import agent, llm
+from app.auth import DEMO_USERS, create_token, require_doctor
 from app.db import Database
 from app.gate import Verdict, classify
 from app.hashchain import HashChain, hash_message
-from app.models import ApproveRequest, BatchApproveRequest, ChatRequest, ChatResponse
+from app.models import ApproveRequest, BatchApproveRequest, ChatRequest, ChatResponse, LoginRequest
 
 # --------------------------------------------------------------------------- #
 # Storage locations (override via env for tests / deployment).
@@ -52,6 +58,18 @@ CRISIS_MESSAGE = (
 )
 
 app = FastAPI(title="Sentinel-Med", version="2.0.0")
+
+_allowed_origins = [o for o in [
+    "http://localhost:3000",
+    os.environ.get("FRONTEND_URL", ""),
+] if o]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 db = Database(DB_PATH)
 chain = HashChain(CHAIN_PATH)
 
@@ -60,6 +78,16 @@ chain = HashChain(CHAIN_PATH)
 def health() -> dict[str, str]:
     """Liveness probe."""
     return {"status": "ok"}
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest) -> dict[str, str]:
+    """Authenticate with demo credentials and return a JWT."""
+    user = DEMO_USERS.get(req.username)
+    if user is None or user["password"] != req.password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_token(req.username, user["role"])
+    return {"token": token, "role": user["role"]}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -186,7 +214,7 @@ def get_interaction(item_id: int) -> dict[str, Any]:
 
 
 @app.get("/doctor/inbox")
-def doctor_inbox() -> dict[str, Any]:
+def doctor_inbox(_: dict = Depends(require_doctor)) -> dict[str, Any]:
     """Return triaged, priority-sorted HOLD items plus dashboard stats."""
     items = db.pending_inbox()
     return {"count": len(items), "stats": db.inbox_stats(), "items": items}
@@ -199,7 +227,7 @@ def _release(item: dict[str, Any], *, status: str, final: str, reason: str, note
 
 
 @app.post("/doctor/approve/{item_id}")
-def doctor_approve(item_id: int, req: ApproveRequest) -> dict[str, Any]:
+def doctor_approve(item_id: int, req: ApproveRequest, _: dict = Depends(require_doctor)) -> dict[str, Any]:
     """Approve (optionally edited) or reject one held item, releasing it to the patient.
 
     The clinician's decision is itself appended to the hash chain, so the audit
@@ -223,7 +251,7 @@ def doctor_approve(item_id: int, req: ApproveRequest) -> dict[str, Any]:
 
 
 @app.post("/doctor/approve_batch")
-def doctor_approve_batch(req: BatchApproveRequest) -> dict[str, Any]:
+def doctor_approve_batch(req: BatchApproveRequest, _: dict = Depends(require_doctor)) -> dict[str, Any]:
     """Release a set of agent-recommended drafts in one supervised action.
 
     This is how a clinician keeps up with thousands of items a day: the agent has

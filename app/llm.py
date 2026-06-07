@@ -1,18 +1,19 @@
-"""Answer generation: OpenAI when configured, deterministic templates otherwise.
+"""Answer generation: MiniMax when configured, deterministic templates otherwise.
 
 The LLM only ever produces *candidate* text. It runs after the deterministic
-gate (see ``app/gate.py``) and never decides routing — so a model outage or a
+gate (see ``app/gate.py``) and never decides routing -- so a model outage or a
 bad completion can never ship an unsafe answer past the gate.
 
-If ``OPENAI_API_KEY`` is unset (or the ``openai`` package is unavailable), this
-module falls back to keyword-matched templates so the demo always runs.
+If ``MINIMAX_API_KEY`` is unset (or the ``openai`` package is unavailable),
+this module falls back to keyword-matched templates so the demo always runs.
 """
 
 from __future__ import annotations
 
 import os
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MODEL = os.environ.get("MINIMAX_MODEL", "MiniMax-Text-01")
 
 _PATIENT_SYSTEM = (
     "You are a careful medical information assistant for a patient portal. "
@@ -184,7 +185,7 @@ def _fallback(message: str, *, for_review: bool) -> str:
 
 
 def generate(message: str, *, for_review: bool = False) -> str:
-    """Generate a candidate answer.
+    """Generate a candidate answer using MiniMax.
 
     Args:
         message: The patient's message.
@@ -192,16 +193,16 @@ def generate(message: str, *, for_review: bool = False) -> str:
             (HOLD path); otherwise a patient-facing answer (ALLOW path).
 
     Returns:
-        Generated text, falling back to a template if OpenAI is unavailable.
+        Generated text, falling back to a template if MiniMax is unavailable.
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("MINIMAX_API_KEY")
     if not api_key:
         return _fallback(message, for_review=for_review)
 
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, base_url=MINIMAX_BASE_URL)
         system = _REVIEW_SYSTEM if for_review else _PATIENT_SYSTEM
         resp = client.chat.completions.create(
             model=MODEL,
@@ -215,5 +216,4 @@ def generate(message: str, *, for_review: bool = False) -> str:
         content = (resp.choices[0].message.content or "").strip()
         return content or _fallback(message, for_review=for_review)
     except Exception:
-        # Any API/SDK failure degrades gracefully to the offline template.
         return _fallback(message, for_review=for_review)

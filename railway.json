@@ -1,0 +1,19 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "service": {
+    "name": "sentinel-med-api"
+  },
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pip install -r requirements.txt",
+    "installCommand": "pip install --no-cache-dir -r requirements.txt"
+  },
+  "deploy": {
+    "startCommand": "sh -c 'uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'",
+    "healthcheckPath": "/health",
+    "restartPolicy": "on-failure"
+  },
+  "environment": {
+    "PYTHONUNBUFFERED": "1"
+  }
+}
