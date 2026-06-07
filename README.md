@@ -60,19 +60,48 @@ patient → POST /chat ─► GATE ─► ALLOW ─► LLM answer ────�
 - **Backend:** FastAPI (Python), SQLite for messages + inbox state, JSON-lines
   for the hash chain.
 - **Gate:** `app/gate.py` — deterministic three-path classifier.
+- **Triage agent:** `app/agent.py` — deterministic doctor-side agent that ranks
+  every HOLD item by clinical risk and recommends an action.
 - **Chain:** `app/hashchain.py` — append + verify sha256 chain.
 - **LLM:** `app/llm.py` — OpenAI (`gpt-4o-mini` by default) with an offline
   template fallback so the demo runs with no API key.
-- **Frontend:** single `static/index.html` — patient chat + doctor inbox,
-  Tailwind via CDN, vanilla JS. No build step.
+- **Frontend:** single `static/index.html` — patient chat + triaged doctor inbox
+  + audit, Tailwind via CDN, vanilla JS. No build step.
+
+### The doctor-side triage agent (human-in-the-loop *at scale*)
+
+One clinician can't hand-handle thousands of held questions a day. The agent
+triages every HOLD item the moment it lands and changes the clinician's job from
+*"answer every message"* to *"supervise the agent"*:
+
+| Priority | Trigger | Recommendation |
+|----------|---------|----------------|
+| **CRITICAL** | red-flag emergencies (chest pain, breathing trouble, stroke signs, fainting…) | **ESCALATE** — see now |
+| **HIGH** | serious signals (anticoagulant interaction, severe pain, pregnancy concern…) | **REVIEW** — prioritize |
+| **MEDIUM** | clinical-judgment questions with no red flags (diagnostic, interactions) | **REVIEW** |
+| **LOW** | general wellness / OTC questions, no red flags | **SUGGEST_APPROVE** — batch-clear |
+
+The inbox is **sorted most-urgent-first**, and the clinician can **batch-approve**
+all agent-recommended low-risk drafts in one click. Triage is deterministic — fast
+and inspectable, the right property at high volume — and the agent never releases
+anything itself: a human (or an explicit batch action) always decides, and every
+release is hash-chained, including which items were batch-approved.
+
+### Reliable delivery
+
+The patient transcript is **server-authoritative**: the patient view renders from
+`GET /patient/conversation/{session_id}`, so a clinician's released reply always
+appears — independent of which window/tab is focused, and surviving a refresh.
 
 ### Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `POST` | `/chat` | Patient submits a message → ALLOW answer / HOLD placeholder / BLOCK refusal |
-| `GET`  | `/doctor/inbox` | Pending HOLD items (question + draft answer) |
-| `POST` | `/doctor/approve/{id}` | Approve or edit a draft; release to patient |
+| `GET`  | `/patient/conversation/{session_id}` | Server-authoritative patient transcript (drives the live UI) |
+| `GET`  | `/doctor/inbox` | Triaged, priority-sorted HOLD items + dashboard stats |
+| `POST` | `/doctor/approve/{id}` | Approve / edit / reject one draft; release to patient |
+| `POST` | `/doctor/approve_batch` | Release all agent-recommended low-risk drafts at once |
 | `GET`  | `/audit` | Full hash chain with per-record verification status |
 | `GET`  | `/` | Serves the frontend |
 
@@ -82,15 +111,17 @@ patient → POST /chat ─► GATE ─► ALLOW ─► LLM answer ────�
 app/
   main.py        FastAPI app + endpoints
   gate.py        deterministic three-path classifier  (the safety floor)
+  agent.py       doctor-side triage agent: risk priority + recommendation
   hashchain.py   append + verify sha256 hash chain
   llm.py         OpenAI answer generation + offline template fallback
-  db.py          SQLite operational store (interactions + inbox)
+  db.py          SQLite operational store (interactions + inbox + sessions)
   models.py      pydantic request/response schemas
 static/
-  index.html     single-page UI (patient / doctor / audit), Tailwind CDN
+  index.html     single-page UI (patient / triaged doctor inbox / audit), Tailwind CDN
 tests/
-  test_gate.py        14 tests, every verdict path + precedence
-  test_hashchain.py   7 tests, append + tamper detection
+  test_gate.py        gate: every verdict path + precedence
+  test_agent.py       triage: priority tiers + batch-approve safety
+  test_hashchain.py   chain: append + tamper detection
 demo.sh          self-contained end-to-end walkthrough
 ```
 

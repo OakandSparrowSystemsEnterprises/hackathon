@@ -8,16 +8,14 @@
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen">
   <div class="max-w-3xl mx-auto p-4">
-    <!-- Header -->
     <header class="mb-4">
       <h1 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
         <span class="inline-block w-3 h-3 rounded-full bg-emerald-500"></span>
         Sentinel-Med
       </h1>
-      <p class="text-sm text-slate-500">Human-in-the-Loop medical chatbot · every decision hash-chained</p>
+      <p class="text-sm text-slate-500">Human-in-the-Loop medical chatbot · AI-triaged doctor inbox · every decision hash-chained</p>
     </header>
 
-    <!-- Tabs -->
     <nav class="flex gap-1 mb-4 bg-white rounded-lg p-1 shadow-sm">
       <button data-tab="patient" class="tab flex-1 py-2 rounded-md text-sm font-medium">Patient Chat</button>
       <button data-tab="doctor"  class="tab flex-1 py-2 rounded-md text-sm font-medium">Doctor Inbox <span id="inboxBadge" class="ml-1 hidden bg-amber-500 text-white text-xs rounded-full px-2"></span></button>
@@ -44,8 +42,9 @@
 
     <!-- ===================== DOCTOR ===================== -->
     <section id="view-doctor" class="view hidden">
+      <div id="inboxStats" class="bg-white rounded-lg shadow-sm p-3 mb-3 text-sm"></div>
       <div class="flex justify-between items-center mb-3">
-        <h2 class="font-semibold text-slate-700">Pending clinician review</h2>
+        <h2 class="font-semibold text-slate-700">Triaged queue · most urgent first</h2>
         <button id="refreshInbox" class="text-sm text-emerald-700 hover:underline">↻ Refresh</button>
       </div>
       <div id="inboxList" class="space-y-3"></div>
@@ -66,19 +65,24 @@
 
 <script>
 const $ = (s) => document.querySelector(s);
-const verdictColor = { ALLOW: "emerald", HOLD: "amber", BLOCK: "rose" };
+const esc = (s) => (s||"").replace(/[&<>"']/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+
+// Stable per-browser session id so the patient can poll for released replies.
+const SESSION_ID = (() => {
+  let s = localStorage.getItem("sentinel_session");
+  if (!s) { s = (crypto.randomUUID ? crypto.randomUUID() : "s-" + Math.random().toString(36).slice(2) + Date.now()); localStorage.setItem("sentinel_session", s); }
+  return s;
+})();
 
 // ---------- Tabs ----------
+let currentTab = "patient";
 function setActiveTabStyles() {
   document.querySelectorAll(".tab").forEach((b) => {
     const active = b.dataset.tab === currentTab;
-    b.className = "tab flex-1 py-2 rounded-md text-sm font-medium " +
-      (active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50");
-    // re-append badge for doctor tab if it got wiped
+    if (active) { b.classList.add("bg-slate-900","text-white"); b.classList.remove("text-slate-600","hover:bg-slate-50"); }
+    else { b.classList.remove("bg-slate-900","text-white"); b.classList.add("text-slate-600","hover:bg-slate-50"); }
   });
-  updateInboxBadge();
 }
-let currentTab = "patient";
 function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
@@ -89,58 +93,127 @@ function switchTab(tab) {
 }
 document.querySelectorAll(".tab").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
 
-// ---------- Patient chat ----------
-function addBubble(role, text, verdict) {
-  const log = $("#chatLog");
-  const wrap = document.createElement("div");
-  wrap.className = "flex " + (role === "patient" ? "justify-end" : "justify-start");
-  const c = verdict ? verdictColor[verdict] : "slate";
-  const badge = verdict
-    ? `<div class="text-[10px] font-bold uppercase mb-1 text-${c}-600">${verdict}</div>` : "";
-  wrap.innerHTML = `<div class="max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-    role === "patient" ? "bg-emerald-600 text-white" : `bg-${c}-50 border border-${c}-200`}">
-    ${badge}<div>${escapeHtml(text)}</div></div>`;
-  log.appendChild(wrap);
-  log.scrollTop = log.scrollHeight;
-}
-function escapeHtml(s){return s.replace(/[&<>"']/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));}
+// =====================================================================
+// PATIENT — server-authoritative transcript.
+// The chat log is rendered entirely from GET /patient/conversation, so a
+// clinician's released reply ALWAYS shows up: no client-side state, no
+// dependence on which window/tab is focused, survives a refresh.
+// =====================================================================
+let convPoller = null;
 
+function botBubble(turn) {
+  // Decide colour + label from the server's view of this turn.
+  let color = "slate", label = "";
+  if (turn.kind === "allow")        { color = "emerald"; label = "ALLOW"; }
+  else if (turn.kind === "block")   { color = "rose";    label = "BLOCK"; }
+  else if (turn.kind === "pending") { color = "amber";   label = "HOLD · awaiting clinician"; }
+  else if (turn.kind === "approved"){ color = "emerald"; label = "✓ Clinician approved"; }
+  else if (turn.kind === "rejected"){ color = "rose";    label = "Clinician decision"; }
+  return `<div class="flex justify-start">
+    <div class="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-${color}-50 border border-${color}-200 whitespace-pre-line">
+      <div class="text-[10px] font-bold uppercase mb-1 text-${color}-700">${label}</div>
+      <div>${esc(turn.reply)}</div>
+    </div></div>`;
+}
+function patientBubble(text) {
+  return `<div class="flex justify-end"><div class="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-emerald-600 text-white">${esc(text)}</div></div>`;
+}
+async function renderConversation() {
+  let data;
+  try { data = await (await fetch("/patient/conversation/" + SESSION_ID)).json(); }
+  catch (e) { return false; }
+  const log = $("#chatLog");
+  log.innerHTML = data.turns.map((t) => patientBubble(t.patient_message) + botBubble(t)).join("");
+  log.scrollTop = log.scrollHeight;
+  const anyPending = data.turns.some((t) => t.kind === "pending");
+  // Keep polling only while something is awaiting a clinician.
+  if (anyPending && !convPoller) convPoller = setInterval(renderConversation, 1500);
+  if (!anyPending && convPoller) { clearInterval(convPoller); convPoller = null; }
+  return anyPending;
+}
 async function sendMessage() {
   const input = $("#chatInput");
   const msg = input.value.trim();
   if (!msg) return;
-  addBubble("patient", msg);
   input.value = "";
+  // Optimistic echo so it feels instant; the server render replaces it.
+  $("#chatLog").insertAdjacentHTML("beforeend", patientBubble(msg));
+  $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
   try {
-    const r = await fetch("/chat", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({message: msg})});
-    const data = await r.json();
-    addBubble("bot", data.reply, data.verdict);
-    refreshInboxBadge();
+    await fetch("/chat", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({message: msg, session_id: SESSION_ID})});
   } catch (e) {
-    addBubble("bot", "Network error: " + e.message, "BLOCK");
+    $("#chatLog").insertAdjacentHTML("beforeend", botBubble({kind:"block", reply:"Network error: " + e.message}));
   }
+  await renderConversation();
+  refreshInboxBadge();
 }
 $("#sendBtn").onclick = sendMessage;
 $("#chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMessage(); });
 document.querySelectorAll(".example").forEach((b) => b.onclick = () => { $("#chatInput").value = b.textContent; sendMessage(); });
 
-// ---------- Doctor inbox ----------
+// =====================================================================
+// DOCTOR — AI-triaged inbox at scale.
+// =====================================================================
+const PRI_BADGE = {
+  CRITICAL: "bg-red-600 text-white",
+  HIGH:     "bg-orange-500 text-white",
+  MEDIUM:   "bg-amber-400 text-slate-900",
+  LOW:      "bg-slate-300 text-slate-700",
+};
+const PRI_BORDER = { CRITICAL:"border-red-500", HIGH:"border-orange-400", MEDIUM:"border-amber-400", LOW:"border-slate-300" };
+const REC_CHIP = {
+  ESCALATE:        "bg-red-50 text-red-700",
+  REVIEW:          "bg-amber-50 text-amber-700",
+  SUGGEST_APPROVE: "bg-emerald-50 text-emerald-700",
+};
+
+function renderStats(s) {
+  const chip = (label, n, cls) => `<span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${cls}">${label} ${n}</span>`;
+  const batchBtn = s.batch_approvable > 0
+    ? `<button id="batchBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-md">⚡ Approve ${s.batch_approvable} agent-recommended</button>`
+    : `<span class="text-xs text-slate-400">No low-risk items to batch-approve</span>`;
+  $("#inboxStats").innerHTML = `
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="font-semibold text-slate-700">${s.pending} awaiting review</span>
+        ${chip("CRITICAL", s.CRITICAL, "bg-red-600 text-white")}
+        ${chip("HIGH", s.HIGH, "bg-orange-500 text-white")}
+        ${chip("MEDIUM", s.MEDIUM, "bg-amber-400 text-slate-900")}
+        ${chip("LOW", s.LOW, "bg-slate-300 text-slate-700")}
+      </div>
+      ${batchBtn}
+    </div>
+    <p class="text-xs text-slate-400 mt-1">Agent triaged every item by clinical risk. You handle the urgent few; batch-clear the safe many.</p>`;
+  const bb = $("#batchBtn");
+  if (bb) bb.onclick = batchApprove;
+}
+
 async function loadInbox() {
-  const r = await fetch("/doctor/inbox");
-  const data = await r.json();
+  const data = await (await fetch("/doctor/inbox")).json();
+  renderStats(data.stats);
   const list = $("#inboxList");
-  if (!data.count) { list.innerHTML = `<p class="text-sm text-slate-400">No items pending review.</p>`; return; }
-  list.innerHTML = data.items.map((it) => `
-    <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 border-amber-400">
-      <div class="text-xs text-amber-600 font-semibold uppercase mb-1">${it.category} · ${it.trigger_reason}</div>
-      <div class="text-sm mb-2"><span class="font-semibold">Patient:</span> ${escapeHtml(it.patient_message)}</div>
+  if (!data.count) { list.innerHTML = `<p class="text-sm text-slate-400">Inbox clear. Nothing awaiting review.</p>`; return; }
+  list.innerHTML = data.items.map((it) => {
+    const pri = it.priority_label || "LOW";
+    const signals = it.urgency_signals ? `<div class="text-xs text-red-600 mt-1">⚠ ${esc(it.urgency_signals)}</div>` : "";
+    return `
+    <div class="bg-white rounded-lg shadow-sm p-4 border-l-4 ${PRI_BORDER[pri]}">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-[10px] font-bold uppercase rounded px-2 py-0.5 ${PRI_BADGE[pri]}">${pri}</span>
+        <span class="text-[10px] font-semibold uppercase rounded px-2 py-0.5 ${REC_CHIP[it.recommendation]||''}">${(it.recommendation||'').replace('_',' ')}</span>
+        <span class="text-xs text-slate-400">${it.category}</span>
+      </div>
+      <div class="text-sm mb-1"><span class="font-semibold">Patient:</span> ${esc(it.patient_message)}</div>
+      ${signals}
+      <div class="text-xs text-slate-500 italic mb-2">🤖 Agent: ${esc(it.triage_rationale||"")}</div>
       <label class="text-xs text-slate-500">AI draft (editable):</label>
-      <textarea id="draft-${it.id}" class="w-full border rounded-md p-2 text-sm mt-1 mb-2" rows="4">${escapeHtml(it.draft_response||"")}</textarea>
+      <textarea id="draft-${it.id}" class="w-full border rounded-md p-2 text-sm mt-1 mb-2" rows="4">${esc(it.draft_response||"")}</textarea>
       <div class="flex gap-2">
-        <button onclick="approve(${it.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-sm">Approve & release</button>
+        <button onclick="approve(${it.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-sm">Approve &amp; release</button>
         <button onclick="reject(${it.id})" class="bg-rose-100 hover:bg-rose-200 text-rose-700 px-3 py-1.5 rounded-md text-sm">Reject</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 async function approve(id) {
   const text = $("#draft-" + id).value;
@@ -149,6 +222,10 @@ async function approve(id) {
 }
 async function reject(id) {
   await fetch("/doctor/approve/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"reject"})});
+  loadInbox(); refreshInboxBadge();
+}
+async function batchApprove() {
+  await fetch("/doctor/approve_batch", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({})});
   loadInbox(); refreshInboxBadge();
 }
 $("#refreshInbox").onclick = loadInbox;
@@ -163,10 +240,12 @@ function updateInboxBadge() {
   if (n > 0) { b.textContent = n; b.classList.remove("hidden"); } else { b.classList.add("hidden"); }
 }
 
-// ---------- Audit ----------
+// =====================================================================
+// AUDIT
+// =====================================================================
+const verdictColor = { ALLOW: "emerald", HOLD: "amber", BLOCK: "rose" };
 async function loadAudit() {
-  const r = await fetch("/audit");
-  const data = await r.json();
+  const data = await (await fetch("/audit")).json();
   $("#chainStatus").innerHTML = data.chain_valid
     ? `<span class="text-emerald-600">✓ chain valid (${data.length})</span>`
     : `<span class="text-rose-600">✗ TAMPERED</span>`;
@@ -174,14 +253,14 @@ async function loadAudit() {
   if (!data.length) { list.innerHTML = `<p class="text-sm text-slate-400 font-sans">No decisions logged yet.</p>`; return; }
   list.innerHTML = data.records.map((rec) => {
     const c = verdictColor[rec.gate_verdict] || "slate";
-    const ok = rec._valid ? `<span class="text-emerald-600">✓</span>` : `<span class="text-rose-600">✗ ${rec._error||""}</span>`;
+    const ok = rec._valid ? `<span class="text-emerald-600">✓</span>` : `<span class="text-rose-600">✗ ${esc(rec._error||"")}</span>`;
     return `<div class="bg-white rounded p-2 shadow-sm">
       <div class="flex justify-between">
         <span><span class="text-${c}-600 font-bold">${rec.gate_verdict}</span> · ${rec.trigger_reason} ${ok}</span>
         <span class="text-slate-400">#${rec.index}</span>
       </div>
-      <div class="text-slate-400 truncate">msg ${rec.message_hash.slice(0,16)}… · ${rec.timestamp}</div>
-      <div class="text-slate-400 truncate">hash ${rec.current_hash.slice(0,24)}… ← parent ${rec.parent_hash.slice(0,12)}…</div>
+      <div class="text-slate-400 truncate">msg ${(rec.message_hash||'').slice(0,16)}… · ${rec.timestamp}</div>
+      <div class="text-slate-400 truncate">hash ${(rec.current_hash||'').slice(0,24)}… ← parent ${(rec.parent_hash||'').slice(0,12)}…</div>
     </div>`;
   }).join("");
 }
@@ -189,7 +268,9 @@ $("#refreshAudit").onclick = loadAudit;
 
 // ---------- Init ----------
 switchTab("patient");
+renderConversation();   // restore transcript + resume polling if anything is pending
 refreshInboxBadge();
+
 </script>
 </body>
 </html>
